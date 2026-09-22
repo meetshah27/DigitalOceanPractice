@@ -2,6 +2,38 @@
 
 FastAPI service that ingests user-submitted product reviews, flags potential spam at ingest time, and exposes an endpoint to query flagged reviews.
 
+## Run locally
+
+Requires Python 3.11.
+
+```bash
+py -3.11 -m venv .venv                      # macOS/Linux: python3.11 -m venv .venv
+.venv/Scripts/activate                      # macOS/Linux: source .venv/bin/activate
+pip install -r requirements-dev.txt
+
+uvicorn app.main:app --reload --port 8080   # http://localhost:8080/docs
+pytest -q                                   # full test suite
+```
+
+Config via env vars: `DB_PATH` (default `data/reviews.db`), `LOG_LEVEL` (default `INFO`).
+Deployment: see [DEPLOY.md](DEPLOY.md).
+
+## Layout
+
+```
+app/
+  main.py            routes, request-id + logging middleware
+  schemas.py         Pydantic input/output models (validation lives here)
+  rules.py           spam rules: pure functions, no I/O
+  store.py           SQLite access: ingest transaction, queries
+  db.py              connection + schema
+  logging_config.py  JSON log formatter
+tests/
+  test_rules.py  test_api.py  test_validation.py  test_concurrency.py  test_health.py
+```
+
+Flow of `POST /reviews`: `schemas` validates → `store` opens a write transaction, looks up duplicate facts → `rules.evaluate` decides → `store` inserts → `main` logs the decision.
+
 ## Requirements
 
 ### Functional
@@ -92,3 +124,45 @@ Text normalization (used by rules): Unicode NFKC, casefold, collapse whitespace,
 ## Storage
 
 SQLite (stdlib `sqlite3`). On App Platform the filesystem is ephemeral, so data resets on redeploy/restart; the service runs as a single instance. Upgrade path: DigitalOcean Managed PostgreSQL.
+
+## Tradeoffs
+
+**What this optimizes for right now:** correctness and explainability under a 3-hour time box. Every flag carries its reasons, rules are deterministic and unit-tested, input is strictly validated, and there is one process and one file to operate. It does *not* optimize for scale, availability, or catch rate against adversarial spammers.
+
+| Decision | Chosen | Alternative | What the alternative gets that this doesn't | What this gets that the alternative doesn't |
+|---|---|---|---|---|
+| When to flag | At ingest | At query time | Rule changes apply to all reviews instantly; no stale flags | Cheap, indexed queries; decision fixed at write time and auditable; flag logged once |
+| Detection | Deterministic rules | ML classifier / 3rd-party spam API | Catches novel and paraphrased spam; learns from labels | Explainable reasons, zero training data, predictable, trivially testable, no external latency or cost |
+| Storage | SQLite | Managed PostgreSQL | Durability across deploys, multiple instances, backups, concurrent writers | No extra service or cost, zero setup, one file; stdlib only |
+| Ingest path | Synchronous | Queue + async worker | Absorbs spikes; slow/expensive checks don't block clients | Client gets the verdict in the response; no queue to run; simpler failure modes |
+| Pagination | `limit`/`offset` | Cursor (keyset) | Stable pages while new reviews arrive; constant cost at deep pages | Simple for clients, supports jumping to a page, easy `total` |
+| Validation | Strict (reject `"5"`, naive times, extra fields, epochs) | Lenient coercion | Accepts more client variants without errors | Bad data fails loudly at the boundary instead of silently corrupting rules/ordering |
+| Retries | Idempotent on `review_id` (200 / 409) | Always 409 on existing id | Simpler | Safe client retries after timeouts; real conflicts still surfaced |
+| Flag reasons | JSON column | Separate `review_flags` table | Indexed filter by reason; per-rule analytics in SQL | One row per review, simpler writes and reads |
+| Hosting | App Platform | Droplet / Kubernetes | Persistent disk (Droplet); fine-grained control and scaling (K8s) | Git push → deploy, managed TLS, health checks, logs; no server admin |
+
+**Known rule weaknesses (accepted for now):**
+- `contains_url` flags legitimate mentions like "bought on amazon.com" (false positive).
+- `duplicate_product_review` flags a user who legitimately updates their review.
+- Keyword and URL rules are easy to evade (`b u y  n o w`, `example[dot]com`).
+- Duplicate detection is exact (after normalization); near-duplicates slip through.
+- Only the later duplicate is flagged; the original is never re-flagged.
+
+## Future work and scalability
+
+**Next (small, high value)**
+- `user_burst` rule: too many reviews from one user in a time window.
+- Thresholds and keyword list via env/config; `rules_version` stored per review so every verdict is traceable to the rule set that produced it.
+- Moderation workflow: `PATCH /reviews/{id}` to mark flagged reviews as `confirmed_spam` / `cleared`; these labels become training data later.
+- Filter flagged query by `reason`; cursor pagination.
+- Authentication (API keys) and rate limiting on ingest; request body size limit.
+- CI (GitHub Actions: lint + tests on every push).
+
+**Scale**
+- **Storage:** Managed PostgreSQL → durable data, multiple app instances, backups. Same schema; the transaction becomes a unique constraint + `INSERT ... ON CONFLICT` plus row-level locking or advisory locks for duplicate checks.
+- **Throughput:** put a queue (e.g. Redis/Kafka) between the API and a worker pool; API returns `202` with status `pending`; flagged state becomes eventually consistent.
+- **Duplicate detection at scale:** exact match via a hash index on `text_norm`; near-duplicates via MinHash/SimHash locality-sensitive hashing instead of scanning.
+- **Re-scoring:** background job that re-evaluates existing reviews when rules change, driven by `rules_version`.
+- **Smarter detection:** keep rules as a fast first pass; add an ML score (text + user behavior features such as account age, review velocity, rating distribution), trained on moderator labels; run new rules/models in *shadow mode* (log verdicts, don't flag) before enabling.
+- **Observability:** metrics for ingest rate, latency, and flag rate *per rule* (a sudden spike means a spam wave or a broken rule); alerts; log shipping.
+- **Privacy:** retention policy for review text; avoid logging user content (already enforced).
