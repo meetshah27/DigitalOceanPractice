@@ -2,12 +2,14 @@ import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
+from typing import Annotated
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 
-from app import config
+from app import config, store
 from app.db import init_db
 from app.logging_config import request_id_var, setup_logging
+from app.schemas import FlaggedPage, ReviewIn, ReviewOut
 
 setup_logging(config.LOG_LEVEL)
 log = logging.getLogger("app")
@@ -51,3 +53,46 @@ async def request_context(request: Request, call_next):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.post("/reviews", response_model=ReviewOut, status_code=201)
+def create_review(review: ReviewIn, response: Response):
+    try:
+        stored, created = store.ingest(review)
+    except store.ReviewConflict:
+        log.warning("review_conflict", extra={"fields": {"review_id": review.review_id}})
+        raise HTTPException(409, "review_id already exists with a different payload")
+    if not created:
+        response.status_code = 200
+    log.info(
+        "review_ingested",
+        extra={"fields": {
+            "review_id": stored.review_id,
+            "product_id": stored.product_id,
+            "user_id": stored.user_id,
+            "created": created,
+            "is_flagged": stored.is_flagged,
+            "flag_reasons": stored.flag_reasons,
+        }},
+    )
+    return stored
+
+
+# Declared before /reviews/{review_id} so "flagged" isn't captured as an id.
+@app.get("/reviews/flagged", response_model=FlaggedPage)
+def flagged_reviews(
+    product_id: Annotated[str | None, Query(max_length=64)] = None,
+    user_id: Annotated[str | None, Query(max_length=64)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+):
+    items, total = store.list_flagged(product_id, user_id, limit, offset)
+    return FlaggedPage(items=items, total=total, limit=limit, offset=offset)
+
+
+@app.get("/reviews/{review_id}", response_model=ReviewOut)
+def get_review(review_id: str):
+    review = store.get(review_id)
+    if review is None:
+        raise HTTPException(404, "review not found")
+    return review

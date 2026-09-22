@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 from app import config
@@ -22,18 +23,19 @@ CREATE INDEX IF NOT EXISTS ix_user_product ON reviews (user_id, product_id);
 """
 
 
-def connect() -> sqlite3.Connection:
+@contextmanager
+def connection():
     # isolation_level=None: we manage transactions explicitly (BEGIN IMMEDIATE on ingest).
     conn = sqlite3.connect(config.DB_PATH, timeout=5, isolation_level=None)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def init_db() -> None:
     Path(config.DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-    conn = connect()
-    try:
+    with connection() as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(SCHEMA)
-    finally:
-        conn.close()
