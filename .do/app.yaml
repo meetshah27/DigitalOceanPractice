@@ -1,0 +1,19 @@
+# App Platform spec. Use via Create App -> "Import from app spec".
+# Verify instance size and region in the UI before creating.
+name: review-spam-service
+region: nyc
+services:
+  - name: api
+    github:
+      repo: meetshah27/DigitalOceanPractice
+      branch: main
+      deploy_on_push: true
+    dockerfile_path: Dockerfile
+    http_port: 8080
+    instance_count: 1  # must stay 1: SQLite lives in the container
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    health_check:
+      http_path: /health
+    envs:
+      - key: LOG_LEVEL
+        value: INFO
