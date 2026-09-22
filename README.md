@@ -85,7 +85,7 @@ Text normalization (used by rules): Unicode NFKC, casefold, collapse whitespace,
 - **Idempotency:** same `review_id` + identical payload → `200` with stored review (no re-evaluation). Different payload → `409`.
 - **Duplicate ordering:** only the later-ingested review is flagged; the original may be genuine.
 - **Short generic text** ("Great!") is excluded from `duplicate_text` by the 20-char minimum to avoid false positives.
-- **Timestamps:** naive datetimes rejected; all stored as UTC.
+- **Timestamps:** naive datetimes rejected; all stored as UTC. Numeric epoch values rejected (seconds vs. milliseconds is ambiguous). Retries with the same instant in a different offset are treated as identical.
 - **Consistency:** rule checks and insert run in one SQLite transaction.
 - **Privacy:** review text is never logged.
 

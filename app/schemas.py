@@ -20,6 +20,14 @@ class ReviewIn(BaseModel):
     text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=5000)]
     submitted_at: AwareDatetime
 
+    @field_validator("submitted_at", mode="before")
+    @classmethod
+    def require_iso_string(cls, v):
+        # Pydantic would otherwise accept numbers as epoch time, guessing seconds vs milliseconds.
+        if not isinstance(v, str):
+            raise ValueError("submitted_at must be an ISO 8601 string with timezone")
+        return v
+
     @field_validator("submitted_at")
     @classmethod
     def normalize_submitted_at(cls, v: datetime) -> datetime:
