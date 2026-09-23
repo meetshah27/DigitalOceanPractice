@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse
 
 from app import config, store
 from app.db import init_db
@@ -31,7 +32,12 @@ async def request_context(request: Request, call_next):
     token = request_id_var.set(request_id)
     start = time.perf_counter()
     try:
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception:
+            # Details go to logs only; the client gets a generic body plus the request id.
+            log.exception("unhandled error", extra={"fields": {"path": request.url.path}})
+            response = JSONResponse({"detail": "Internal Server Error"}, status_code=500)
         log.info(
             "request",
             extra={"fields": {
@@ -43,9 +49,6 @@ async def request_context(request: Request, call_next):
         )
         response.headers["X-Request-ID"] = request_id
         return response
-    except Exception:
-        log.exception("unhandled error", extra={"fields": {"path": request.url.path}})
-        raise
     finally:
         request_id_var.reset(token)
 
