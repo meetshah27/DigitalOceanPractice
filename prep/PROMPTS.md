@@ -25,6 +25,7 @@ Replace `<...>` placeholders. AI tools are explicitly allowed — use them openl
 | 1:50–2:20 | 5 Edge cases + ops (config, readiness, metrics) | Tests green, CI green |
 | 2:20–2:40 | 6b Verify live | Smoke tests pass on live URL, logs checked |
 | 2:40–3:00 | 7 README trade-offs + final push | Final checklist done |
+| After build | **Final code tour** (section U) — compressed if short on time | You can explain every file |
 
 **Rule:** deploy a thin version early, then deepen. Something live and tested beats something clever and unfinished.
 If behind schedule at 2:00 → use the "Running out of time" prompt (section E).
@@ -66,13 +67,17 @@ They evaluate: engineering quality, automated testing, automation/CI, operationa
 (observability, configurability, scalability).
 
 Working rules for this whole session:
-1. Plan before code. For each step, explain the plan in plain words and wait for my "go".
+1. Explain before writing. Before creating or editing ANY file, explain in plain words what you will write,
+   where, and why — then wait for my "go". No code before my approval.
 2. Small steps, one idea per commit. Run tests (and the app when relevant) before every push.
-3. After each change: what changed, why, how it was verified.
+3. After each change: what changed, why, how it was verified, then 1 quick check question for me.
 4. Simplest correct design; no speculative features. Explain any new dependency.
 5. Never log user content, PII, or secrets. Never return internal error details to clients.
 6. All tunable values come from environment config with safe defaults, validated at startup.
 7. Keep a README "Decisions & trade-offs" section updated as we go.
+8. When the build is complete, give me a code tour (see "Final code tour" in my prompts): request order,
+   one file per stop, real line numbers, why each key line exists, an interview sentence, one check question.
+   Wait for my answer before the next stop.
 ```
 
 **0b. First message:**
@@ -346,7 +351,22 @@ pytest -q
 
 ## U. Understanding prompts (use anytime)
 
-**Code tour**
+**Final code tour (after the build — before the 30-min discussion)**
+```
+The build is complete. Give me the code tour now, like a teacher:
+- Start with a map: the stops in request order (middleware → validation → handlers → store/DB → processing
+  → config/logging/CI/deploy) and a one-line flow of the whole request.
+- At each stop: the file's single job; key lines with real line numbers as clickable file:line links;
+  why each line is written that way and what breaks without it; one interview-ready sentence.
+- End each stop with ONE check question. Wait for my answer. Tell me precisely what I got right,
+  what was wrong or missing, and the stronger version — then go to the next stop.
+- If I ask about something (a helper, a line), explain it with a concrete example before moving on.
+- Finish with a summary table: stop | key phrase to remember, plus any gaps you noticed while touring.
+```
+If time is short, ask for the **compressed tour**: "Same tour, 10 minutes total: one key line + one
+interview sentence per stop, no check questions."
+
+**Code tour (any time, shorter)**
 ```
 Give me a code tour in request order, one file per stop: key lines with line numbers, why they're written that
 way, an interview-ready sentence, one check question. Wait for my answer before the next stop.
